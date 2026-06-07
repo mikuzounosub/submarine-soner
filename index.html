@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>横スクロール・ソナー</title>
+    <title>本格ウォーターフォール・ソナー</title>
     <style>
         body {
             margin: 0;
-            background-color: #000500; /* 深海をイメージした超暗い緑 */
+            background-color: #000500;
             overflow: hidden;
             display: flex;
             justify-content: center;
@@ -47,7 +47,7 @@
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
-            // リサイズ時に背景を一度黒にする
+            // 初回およびリサイズ時に背景を深海色で初期化
             ctx.fillStyle = '#000500';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
@@ -58,59 +58,63 @@
             startBtn.style.display = 'none';
             
             try {
-                // 1. マイクアクセスと音声解析の準備
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const source = audioContext.createMediaStreamSource(stream);
                 const analyser = audioContext.createAnalyser();
                 
-                // fftSizeを大きくすると、縦方向（周波数）の解像度が上がります
                 analyser.fftSize = 512; 
                 source.connect(analyser);
 
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
 
-                // スクロール速度（1フレームに何ピクセル左にずらすか）
-                // ここを小さくするほど「ゆっくり」流れます
-                const scrollSpeed = 1.5; 
+                // スクロール速度（1フレームに進むピクセル数）
+                // 1にするとよりクッキリ滑らかに、数値を下げるとさらにゆっくり流れます
+                const scrollSpeed = 1; 
 
                 function draw() {
                     requestAnimationFrame(draw);
 
-                    // --- 1. 画面全体を左にシフトさせる（ここが重要！） ---
-                    // 一時的に現在の画面をキャプチャして、少し左にずらして描き直す
-                    ctx.drawImage(canvas, scrollSpeed, 0, canvas.width - scrollSpeed, canvas.height, 0, 0, canvas.width - scrollSpeed, canvas.height);
+                    // --- 1. 画面の絵を完全に複製して左にずらす ---
+                    // 前回のコードと違い、背景を「透過」させずにそのままピクセル移動させます
+                    ctx.drawImage(
+                        canvas, 
+                        scrollSpeed, 0, canvas.width - scrollSpeed, canvas.height, // 元の画像（少し右側を切り取る）
+                        0, 0, canvas.width - scrollSpeed, canvas.height            // 貼り付け先（左端に寄せる）
+                    );
 
-                    // --- 2. 右端の最新データ部分を一度クリアする ---
+                    // --- 2. 新しいデータが入る右端の隙間をリセット ---
                     ctx.fillStyle = '#000500';
                     ctx.fillRect(canvas.width - scrollSpeed, 0, scrollSpeed, canvas.height);
 
-                    // --- 3. マイクの周波数データを取得 ---
+                    // --- 3. 音声データの取得 ---
                     analyser.getByteFrequencyData(dataArray);
 
-                    // --- 4. 右端の1ラインに、音データを縦に並べて描画 ---
-                    // 低音を下に、高音を上に配置します
+                    // --- 4. 右端の1ラインを描画 ---
                     const sliceHeight = canvas.height / bufferLength;
 
                     for (let i = 0; i < bufferLength; i++) {
-                        const value = dataArray[i]; // 0 〜 255 の値
+                        const value = dataArray[i]; 
                         const percent = value / 255;
 
-                        // 音が立っている（強い）部分だけ緑〜明るい緑で発光させる
-                        if (value > 10) {
-                            // 潜水艦の液晶っぽく、緑の輝度を音量に合わせる
-                            const green = Math.floor(percent * 200) + 55;
-                            ctx.fillStyle = `rgb(0, ${green}, 0)`;
+                        // 縦軸（Y座標）：上が高音、下が低音
+                        const y = canvas.height - (i * sliceHeight);
+
+                        if (value > 15) {
+                            // 音が強いほど、明るい黄緑〜白に近い緑に変化（発光感を出す）
+                            const green = Math.min(255, Math.floor(percent * 200) + 100);
+                            const red = Math.floor(percent * 80); // 強い音は少し黄色みがかる
                             
-                            // 右端の隙間に、縦に細長い長方形を敷き詰めていく
-                            const y = canvas.height - (i * sliceHeight);
+                            ctx.fillStyle = `rgb(${red}, ${green}, ${red})`;
+                            ctx.fillRect(canvas.width - scrollSpeed, y, scrollSpeed, sliceHeight);
+                        } else {
+                            // 音がない場所は、うっすらとした環境ノイズ（深海のノイズ）として
+                            // ごく暗い緑を残しておくと、よりソナーっぽくなります
+                            ctx.fillStyle = '#000c00';
                             ctx.fillRect(canvas.width - scrollSpeed, y, scrollSpeed, sliceHeight);
                         }
                     }
-
-                    // ソナーのグリッド線（横線）を右端にうっすら重ねる
-                    drawOverlayGrid();
                 }
 
                 draw();
@@ -121,20 +125,6 @@
                 startBtn.style.display = 'block';
             }
         });
-
-        // 雰囲気を出すためのうっすらとした水平グリッド線
-        function drawOverlayGrid() {
-            ctx.strokeStyle = 'rgba(0, 255, 0, 0.02)';
-            ctx.lineWidth = 1;
-            const gridSpacing = canvas.height / 10;
-            
-            ctx.beginPath();
-            for (let y = gridSpacing; y < canvas.height; y += gridSpacing) {
-                ctx.moveTo(canvas.width - 2, y);
-                ctx.lineTo(canvas.width, y);
-            }
-            ctx.stroke();
-        }
     </script>
 </body>
 </html>
