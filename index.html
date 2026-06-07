@@ -3,163 +3,136 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ソナー・オーディオビジュアライザー</title>
+    <title>横スクロール・ソナー</title>
     <style>
         body {
             margin: 0;
-            background-color: #001100; /* 潜水艦の暗いレーダー画面風 */
+            background-color: #000500; /* 深海をイメージした超暗い緑 */
             overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             color: #00ff00;
-            font-family: monospace;
+            font-family: 'Courier New', Courier, monospace;
         }
         canvas {
             position: absolute;
             top: 0;
             left: 0;
         }
-        #click-to-start {
+        #start-btn {
             position: relative;
             z-index: 10;
             cursor: pointer;
             border: 2px solid #00ff00;
             padding: 15px 30px;
-            background: rgba(0, 40, 0, 0.6);
+            background: rgba(0, 20, 0, 0.8);
             font-size: 18px;
-            box-shadow: 0 0 15px #00ff00;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+            letter-spacing: 2px;
         }
     </style>
 </head>
 <body>
 
-    <div id="click-to-start">画面をクリックしてソナーを起動</div>
+    <div id="start-btn">SONAR SYSTEM START</div>
     <canvas id="sonarCanvas"></canvas>
 
     <script>
         const canvas = document.getElementById('sonarCanvas');
         const ctx = canvas.getContext('2d');
-        const startBtn = document.getElementById('click-to-start');
+        const startBtn = document.getElementById('start-btn');
 
-        // キャンバスサイズを画面いっぱいに
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            // リサイズ時に背景を一度黒にする
+            ctx.fillStyle = '#000500';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // 波（リング）のデータを管理する配列
-        let rings = [];
-
-        // 画面の中心座標
-        let centerX = canvas.width / 2;
-        let centerY = canvas.height / 2;
-
         startBtn.addEventListener('click', async () => {
-            startBtn.style.display = 'none'; // ボタンを非表示に
+            startBtn.style.display = 'none';
             
             try {
-                // 1. マイクの音声ストリームを取得
+                // 1. マイクアクセスと音声解析の準備
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
-                // 2. Web Audio APIの設定
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const source = audioContext.createMediaStreamSource(stream);
                 const analyser = audioContext.createAnalyser();
                 
-                // データの滑らかさを設定
-                analyser.fftSize = 256; 
+                // fftSizeを大きくすると、縦方向（周波数）の解像度が上がります
+                analyser.fftSize = 512; 
                 source.connect(analyser);
 
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
 
-                // 3. アニメーション＆描画ループ
+                // スクロール速度（1フレームに何ピクセル左にずらすか）
+                // ここを小さくするほど「ゆっくり」流れます
+                const scrollSpeed = 1.5; 
+
                 function draw() {
                     requestAnimationFrame(draw);
 
-                    // 画面全体を少し透過した黒で塗りつぶす（残像エフェクトのため）
-                    ctx.fillStyle = 'rgba(0, 17, 0, 0.2)';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    // --- 1. 画面全体を左にシフトさせる（ここが重要！） ---
+                    // 一時的に現在の画面をキャプチャして、少し左にずらして描き直す
+                    ctx.drawImage(canvas, scrollSpeed, 0, canvas.width - scrollSpeed, canvas.height, 0, 0, canvas.width - scrollSpeed, canvas.height);
 
-                    // 固定のレーダーのグリッド（背景）を描画
-                    drawRadarGrid();
+                    // --- 2. 右端の最新データ部分を一度クリアする ---
+                    ctx.fillStyle = '#000500';
+                    ctx.fillRect(canvas.width - scrollSpeed, 0, scrollSpeed, canvas.height);
 
-                    // 音声データの取得（音量）
+                    // --- 3. マイクの周波数データを取得 ---
                     analyser.getByteFrequencyData(dataArray);
-                    
-                    // 平均音量を計算
-                    let total = 0;
+
+                    // --- 4. 右端の1ラインに、音データを縦に並べて描画 ---
+                    // 低音を下に、高音を上に配置します
+                    const sliceHeight = canvas.height / bufferLength;
+
                     for (let i = 0; i < bufferLength; i++) {
-                        total += dataArray[i];
-                    }
-                    let averageVolume = total / bufferLength;
+                        const value = dataArray[i]; // 0 〜 255 の値
+                        const percent = value / 255;
 
-                    // 一定以上の音量を検知したら、新しい波（リング）を追加
-                    if (averageVolume > 30) {
-                        rings.push({
-                            radius: 10,                 // 初期半径
-                            maxRadius: Math.min(canvas.width, canvas.height) * 0.4 + (averageVolume * 2), // 音量に応じた最大半径
-                            alpha: 1,                   // 不透明度
-                            speed: 2 + (averageVolume / 20) // 音量に応じた広がるスピード
-                        });
-                    }
-
-                    // 既存の波（リング）を更新・描画
-                    for (let i = rings.length - 1; i >= 0; i--) {
-                        let r = rings[i];
-                        r.radius += r.speed;
-                        // 外側に行くほど薄くする
-                        r.alpha = 1 - (r.radius / r.maxRadius);
-
-                        if (r.alpha <= 0 || r.radius >= r.maxRadius) {
-                            rings.splice(i, 1); // 消滅した波を配列から削除
-                            continue;
+                        // 音が立っている（強い）部分だけ緑〜明るい緑で発光させる
+                        if (value > 10) {
+                            // 潜水艦の液晶っぽく、緑の輝度を音量に合わせる
+                            const green = Math.floor(percent * 200) + 55;
+                            ctx.fillStyle = `rgb(0, ${green}, 0)`;
+                            
+                            // 右端の隙間に、縦に細長い長方形を敷き詰めていく
+                            const y = canvas.height - (i * sliceHeight);
+                            ctx.fillRect(canvas.width - scrollSpeed, y, scrollSpeed, sliceHeight);
                         }
-
-                        // ソナーの波を描画
-                        ctx.beginPath();
-                        ctx.arc(canvas.width / 2, canvas.height / 2, r.radius, 0, Math.PI * 2);
-                        ctx.strokeStyle = `rgba(0, 255, 0, ${r.alpha})`;
-                        ctx.lineWidth = 3;
-                        ctx.shadowBlur = 15;
-                        ctx.shadowColor = '#00ff00';
-                        ctx.stroke();
-                        ctx.shadowBlur = 0; // シャドウをリセット
                     }
+
+                    // ソナーのグリッド線（横線）を右端にうっすら重ねる
+                    drawOverlayGrid();
                 }
 
                 draw();
 
             } catch (err) {
-                alert('マイクのアクセスが拒否されたか、マイクが見つかりません。');
+                alert('マイクの許可が必要です。');
                 console.error(err);
                 startBtn.style.display = 'block';
             }
         });
 
-        // 背景の潜水艦レーダーっぽい目盛りを描く関数
-        function drawRadarGrid() {
-            ctx.strokeStyle = 'rgba(0, 80, 0, 0.4)';
+        // 雰囲気を出すためのうっすらとした水平グリッド線
+        function drawOverlayGrid() {
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.02)';
             ctx.lineWidth = 1;
-            const maxRadius = Math.min(canvas.width, canvas.height) * 0.4;
-
-            // 同心円のグリッド
-            for (let r = maxRadius / 4; r <= maxRadius; r += maxRadius / 4) {
-                ctx.beginPath();
-                ctx.arc(canvas.width / 2, canvas.height / 2, r, 0, Math.PI * 2);
-                ctx.stroke();
-            }
-
-            // 十字のライン
+            const gridSpacing = canvas.height / 10;
+            
             ctx.beginPath();
-            ctx.moveTo(canvas.width / 2 - maxRadius, canvas.height / 2);
-            ctx.lineTo(canvas.width / 2 + maxRadius, canvas.height / 2);
-            ctx.moveTo(canvas.width / 2, canvas.height / 2 - maxRadius);
-            ctx.lineTo(canvas.width / 2, canvas.height / 2 + maxRadius);
+            for (let y = gridSpacing; y < canvas.height; y += gridSpacing) {
+                ctx.moveTo(canvas.width - 2, y);
+                ctx.lineTo(canvas.width, y);
+            }
             ctx.stroke();
         }
     </script>
