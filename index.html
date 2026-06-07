@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ソナー・オーディオビジュアライザー</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #001100; /* 潜水艦の暗いレーダー画面風 */
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #00ff00;
+            font-family: monospace;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #click-to-start {
+            position: relative;
+            z-index: 10;
+            cursor: pointer;
+            border: 2px solid #00ff00;
+            padding: 15px 30px;
+            background: rgba(0, 40, 0, 0.6);
+            font-size: 18px;
+            box-shadow: 0 0 15px #00ff00;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="click-to-start">画面をクリックしてソナーを起動</div>
+    <canvas id="sonarCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('sonarCanvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('click-to-start');
+
+        // キャンバスサイズを画面いっぱいに
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 波（リング）のデータを管理する配列
+        let rings = [];
+
+        // 画面の中心座標
+        let centerX = canvas.width / 2;
+        let centerY = canvas.height / 2;
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.style.display = 'none'; // ボタンを非表示に
+            
+            try {
+                // 1. マイクの音声ストリームを取得
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 2. Web Audio APIの設定
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+                const analyser = audioContext.createAnalyser();
+                
+                // データの滑らかさを設定
+                analyser.fftSize = 256; 
+                source.connect(analyser);
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                // 3. アニメーション＆描画ループ
+                function draw() {
+                    requestAnimationFrame(draw);
+
+                    // 画面全体を少し透過した黒で塗りつぶす（残像エフェクトのため）
+                    ctx.fillStyle = 'rgba(0, 17, 0, 0.2)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // 固定のレーダーのグリッド（背景）を描画
+                    drawRadarGrid();
+
+                    // 音声データの取得（音量）
+                    analyser.getByteFrequencyData(dataArray);
+                    
+                    // 平均音量を計算
+                    let total = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        total += dataArray[i];
+                    }
+                    let averageVolume = total / bufferLength;
+
+                    // 一定以上の音量を検知したら、新しい波（リング）を追加
+                    if (averageVolume > 30) {
+                        rings.push({
+                            radius: 10,                 // 初期半径
+                            maxRadius: Math.min(canvas.width, canvas.height) * 0.4 + (averageVolume * 2), // 音量に応じた最大半径
+                            alpha: 1,                   // 不透明度
+                            speed: 2 + (averageVolume / 20) // 音量に応じた広がるスピード
+                        });
+                    }
+
+                    // 既存の波（リング）を更新・描画
+                    for (let i = rings.length - 1; i >= 0; i--) {
+                        let r = rings[i];
+                        r.radius += r.speed;
+                        // 外側に行くほど薄くする
+                        r.alpha = 1 - (r.radius / r.maxRadius);
+
+                        if (r.alpha <= 0 || r.radius >= r.maxRadius) {
+                            rings.splice(i, 1); // 消滅した波を配列から削除
+                            continue;
+                        }
+
+                        // ソナーの波を描画
+                        ctx.beginPath();
+                        ctx.arc(canvas.width / 2, canvas.height / 2, r.radius, 0, Math.PI * 2);
+                        ctx.strokeStyle = `rgba(0, 255, 0, ${r.alpha})`;
+                        ctx.lineWidth = 3;
+                        ctx.shadowBlur = 15;
+                        ctx.shadowColor = '#00ff00';
+                        ctx.stroke();
+                        ctx.shadowBlur = 0; // シャドウをリセット
+                    }
+                }
+
+                draw();
+
+            } catch (err) {
+                alert('マイクのアクセスが拒否されたか、マイクが見つかりません。');
+                console.error(err);
+                startBtn.style.display = 'block';
+            }
+        });
+
+        // 背景の潜水艦レーダーっぽい目盛りを描く関数
+        function drawRadarGrid() {
+            ctx.strokeStyle = 'rgba(0, 80, 0, 0.4)';
+            ctx.lineWidth = 1;
+            const maxRadius = Math.min(canvas.width, canvas.height) * 0.4;
+
+            // 同心円のグリッド
+            for (let r = maxRadius / 4; r <= maxRadius; r += maxRadius / 4) {
+                ctx.beginPath();
+                ctx.arc(canvas.width / 2, canvas.height / 2, r, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // 十字のライン
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - maxRadius, canvas.height / 2);
+            ctx.lineTo(canvas.width / 2 + maxRadius, canvas.height / 2);
+            ctx.moveTo(canvas.width / 2, canvas.height / 2 - maxRadius);
+            ctx.lineTo(canvas.width / 2, canvas.height / 2 + maxRadius);
+            ctx.stroke();
+        }
+    </script>
+</body>
+</html>
